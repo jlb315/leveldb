@@ -789,7 +789,8 @@ Status DBImpl::OpenCompactionOutputFile(CompactionState* compact) {
   assert(compact->builder == NULL);
   uint64_t file_number;
   {
-    mutex_.Lock();
+	__transaction_relaxed {
+//	mutex_.Lock();
     file_number = versions_->NewFileNumber();
     pending_outputs_.insert(file_number);
     CompactionState::Output out;
@@ -797,7 +798,8 @@ Status DBImpl::OpenCompactionOutputFile(CompactionState* compact) {
     out.smallest.Clear();
     out.largest.Clear();
     compact->outputs.push_back(out);
-    mutex_.Unlock();
+//    mutex_.Unlock();
+	}
   }
 
   // Make the output file
