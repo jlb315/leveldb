@@ -532,7 +532,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
 }
 
 void DBImpl::CompactMemTable() {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
   assert(imm_ != NULL);
 
   // Save the contents of the memtable as a new Table
@@ -608,7 +608,7 @@ void DBImpl::TEST_CompactRange(int level, const Slice* begin,const Slice* end) {
         manual_compaction_ = &manual;
         MaybeScheduleCompaction();
       } else {  // Running either my compaction or another compaction.
-        bg_cv_.Wait();
+        //bg_cv_.Wait();
       }
     }
     if (manual_compaction_ == &manual) {
@@ -625,7 +625,7 @@ Status DBImpl::TEST_CompactMemTable() {
     // Wait until the compaction completes
 	__transaction_relaxed {
       while (imm_ != NULL && bg_error_.ok()) {
-        bg_cv_.Wait();
+        //bg_cv_.Wait();
       }
       if (imm_ != NULL) {
         s = bg_error_;
@@ -759,7 +759,6 @@ void DBImpl::BackgroundCompaction() {
   
     status = DoCompactionWork(compact, start_micros, imm_micros);
 //    mutex_.Lock();
-    stats_[compact->compaction->level() + 1].Add(stats);
 
     if (status.ok()) {
       status = InstallCompactionResults(compact);
@@ -1041,13 +1040,15 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, const uint64_t start_m
   for (size_t i = 0; i < compact->outputs.size(); i++) {
     stats.bytes_written += compact->outputs[i].file_size;
   }
+  // begin lock in lock-based code
+  stats_[compact->compaction->level() + 1].Add(stats);
 
   return status;
 }
 
 namespace {
 struct IterState {
-  port::Mutex* mu;
+  //port::Mutex* mu;
   Version* version;
   MemTable* mem;
   MemTable* imm;
@@ -1055,11 +1056,13 @@ struct IterState {
 
 static void CleanupIteratorState(void* arg1, void* arg2) {
   IterState* state = reinterpret_cast<IterState*>(arg1);
-  state->mu->Lock();
-  state->mem->Unref();
-  if (state->imm != NULL) state->imm->Unref();
-  state->version->Unref();
-  state->mu->Unlock();
+  __transaction_relaxed {
+    //state->mu->Lock();
+    state->mem->Unref();
+    if (state->imm != NULL) state->imm->Unref();
+    state->version->Unref();
+    //state->mu->Unlock();
+  }
   delete state;
 }
 }  // namespace
@@ -1103,8 +1106,10 @@ Iterator* DBImpl::TEST_NewInternalIterator() {
 }
 
 int64_t DBImpl::TEST_MaxNextLevelOverlappingBytes() {
-  MutexLock l(&mutex_);
-  return versions_->MaxNextLevelOverlappingBytes();
+  __transaction_relaxed {
+    //MutexLock l(&mutex_);
+    return versions_->MaxNextLevelOverlappingBytes();
+  }
 }
 
 Status DBImpl::Get(const ReadOptions& options,
@@ -1135,26 +1140,27 @@ Status DBImpl::Get(const ReadOptions& options,
     Version::GetStats stats;
 
     // Unlock while reading from files and memtables
-  }
-  // First look in the memtable, then in the immutable memtable (if any).
-  LookupKey lkey(key, snapshot);
-  if (mem->Get(lkey, value, &s)) {
-    // Done
-  } else if (imm != NULL && imm->Get(lkey, value, &s)) {
-    // Done
-  } else {
-    s = current->Get(options, lkey, value, &stats);
-    have_stat_update = true;
-  }
-  mutex_.Lock();
+  
+    // First look in the memtable, then in the immutable memtable (if any).
+    LookupKey lkey(key, snapshot);
+    if (mem->Get(lkey, value, &s)) {
+      // Done
+    } else if (imm != NULL && imm->Get(lkey, value, &s)) {
+      // Done
+    } else {
+      s = current->Get(options, lkey, value, &stats);
+      have_stat_update = true;
+    }
+    //would lock here with mutexes
 
-  if (have_stat_update && current->UpdateStats(stats)) {
-    MaybeScheduleCompaction();
+    if (have_stat_update && current->UpdateStats(stats)) {
+      MaybeScheduleCompaction();
+    }
+    mem->Unref();
+    if (imm != NULL) imm->Unref();
+    current->Unref();
+    return s;
   }
-  mem->Unref();
-  if (imm != NULL) imm->Unref();
-  current->Unref();
-  return s;
 }
 
 Iterator* DBImpl::NewIterator(const ReadOptions& options) {
@@ -1178,8 +1184,10 @@ void DBImpl::RecordReadSample(Slice key) {
 }
 
 const Snapshot* DBImpl::GetSnapshot() {
-  MutexLock l(&mutex_);
-  return snapshots_.New(versions_->LastSequence());
+  __transaction_relaxed {
+    //MutexLock l(&mutex_);
+    return snapshots_.New(versions_->LastSequence());
+  }
 }
 
 void DBImpl::ReleaseSnapshot(const Snapshot* s) {
@@ -1202,11 +1210,11 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* my_batch) {
   w.batch = my_batch;
   w.sync = options.sync;
   w.done = false;
-
-  MutexLock l(&mutex_);
+  __transaction_relaxed {
+  //MutexLock l(&mutex_);
   writers_.push_back(&w);
   while (!w.done && &w != writers_.front()) {
-    w.cv.Wait();
+    //w.cv.Wait();
   }
   if (w.done) {
     return w.status;
@@ -1226,7 +1234,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* my_batch) {
     // and protects against concurrent loggers and concurrent writes
     // into mem_.
     {
-      mutex_.Unlock();
+      //mutex_.Unlock();
       status = log_->AddRecord(WriteBatchInternal::Contents(updates));
       bool sync_error = false;
       if (status.ok() && options.sync) {
@@ -1238,7 +1246,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* my_batch) {
       if (status.ok()) {
         status = WriteBatchInternal::InsertInto(updates, mem_);
       }
-      mutex_.Lock();
+      //mutex_.Lock();
       if (sync_error) {
         // The state of the log file is indeterminate: the log record we
         // just added may or may not show up when the DB is re-opened.
@@ -1257,17 +1265,18 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* my_batch) {
     if (ready != &w) {
       ready->status = status;
       ready->done = true;
-      ready->cv.Signal();
+      //ready->cv.Signal();
     }
     if (ready == last_writer) break;
   }
 
   // Notify new head of write queue
-  if (!writers_.empty()) {
-    writers_.front()->cv.Signal();
-  }
+  //if (!writers_.empty()) {
+  //  writers_.front()->cv.Signal();
+  //}
 
   return status;
+  }
 }
 
 // REQUIRES: Writer list must be non-empty
@@ -1386,69 +1395,70 @@ Status DBImpl::MakeRoomForWrite(bool force) {
 
 bool DBImpl::GetProperty(const Slice& property, std::string* value) {
   value->clear();
+  __transaction_relaxed {
+    //MutexLock l(&mutex_);
+    Slice in = property;
+    Slice prefix("leveldb.");
+    if (!in.starts_with(prefix)) return false;
+    in.remove_prefix(prefix.size());
 
-  MutexLock l(&mutex_);
-  Slice in = property;
-  Slice prefix("leveldb.");
-  if (!in.starts_with(prefix)) return false;
-  in.remove_prefix(prefix.size());
-
-  if (in.starts_with("num-files-at-level")) {
-    in.remove_prefix(strlen("num-files-at-level"));
-    uint64_t level;
-    bool ok = ConsumeDecimalNumber(&in, &level) && in.empty();
-    if (!ok || level >= config::kNumLevels) {
-      return false;
-    } else {
-      char buf[100];
-      snprintf(buf, sizeof(buf), "%d",
-               versions_->NumLevelFiles(static_cast<int>(level)));
-      *value = buf;
+    if (in.starts_with("num-files-at-level")) {
+      in.remove_prefix(strlen("num-files-at-level"));
+      uint64_t level;
+      bool ok = ConsumeDecimalNumber(&in, &level) && in.empty();
+      if (!ok || level >= config::kNumLevels) {
+        return false;
+      } else {
+        char buf[100];
+        snprintf(buf, sizeof(buf), "%d",
+                 versions_->NumLevelFiles(static_cast<int>(level)));
+        *value = buf;
+        return true;
+      }
+    } else if (in == "stats") {
+      char buf[200];
+      snprintf(buf, sizeof(buf),
+               "                               Compactions\n"
+               "Level  Files Size(MB) Time(sec) Read(MB) Write(MB)\n"
+               "--------------------------------------------------\n"
+               );
+      value->append(buf);
+      for (int level = 0; level < config::kNumLevels; level++) {
+        int files = versions_->NumLevelFiles(level);
+        if (stats_[level].micros > 0 || files > 0) {
+          snprintf(
+              buf, sizeof(buf),
+              "%3d %8d %8.0f %9.0f %8.0f %9.0f\n",
+              level,
+              files,
+              versions_->NumLevelBytes(level) / 1048576.0,
+              stats_[level].micros / 1e6,
+              stats_[level].bytes_read / 1048576.0,
+              stats_[level].bytes_written / 1048576.0);
+          value->append(buf);
+        }
+      }
+      return true;
+    } else if (in == "sstables") {
+      *value = versions_->current()->DebugString();
+      return true;
+    } else if (in == "approximate-memory-usage") {
+      size_t total_usage = options_.block_cache->TotalCharge();
+      if (mem_) {
+        total_usage += mem_->ApproximateMemoryUsage();
+      }
+      if (imm_) {
+        total_usage += imm_->ApproximateMemoryUsage();
+      }
+      char buf[50];
+      snprintf(buf, sizeof(buf), "%llu",
+               static_cast<unsigned long long>(total_usage));
+      value->append(buf);
       return true;
     }
-  } else if (in == "stats") {
-    char buf[200];
-    snprintf(buf, sizeof(buf),
-             "                               Compactions\n"
-             "Level  Files Size(MB) Time(sec) Read(MB) Write(MB)\n"
-             "--------------------------------------------------\n"
-             );
-    value->append(buf);
-    for (int level = 0; level < config::kNumLevels; level++) {
-      int files = versions_->NumLevelFiles(level);
-      if (stats_[level].micros > 0 || files > 0) {
-        snprintf(
-            buf, sizeof(buf),
-            "%3d %8d %8.0f %9.0f %8.0f %9.0f\n",
-            level,
-            files,
-            versions_->NumLevelBytes(level) / 1048576.0,
-            stats_[level].micros / 1e6,
-            stats_[level].bytes_read / 1048576.0,
-            stats_[level].bytes_written / 1048576.0);
-        value->append(buf);
-      }
-    }
-    return true;
-  } else if (in == "sstables") {
-    *value = versions_->current()->DebugString();
-    return true;
-  } else if (in == "approximate-memory-usage") {
-    size_t total_usage = options_.block_cache->TotalCharge();
-    if (mem_) {
-      total_usage += mem_->ApproximateMemoryUsage();
-    }
-    if (imm_) {
-      total_usage += imm_->ApproximateMemoryUsage();
-    }
-    char buf[50];
-    snprintf(buf, sizeof(buf), "%llu",
-             static_cast<unsigned long long>(total_usage));
-    value->append(buf);
-    return true;
-  }
 
-  return false;
+    return false;
+  }
 }
 
 void DBImpl::GetApproximateSizes(
@@ -1456,8 +1466,8 @@ void DBImpl::GetApproximateSizes(
     uint64_t* sizes) {
   // TODO(opt): better implementation
   Version* v;
-  {
-    MutexLock l(&mutex_);
+  __transaction_relaxed {
+    //MutexLock l(&mutex_);
     versions_->current()->Ref();
     v = versions_->current();
   }
@@ -1471,8 +1481,8 @@ void DBImpl::GetApproximateSizes(
     sizes[i] = (limit >= start ? limit - start : 0);
   }
 
-  {
-    MutexLock l(&mutex_);
+  __transaction_relaxed {
+    //MutexLock l(&mutex_);
     v->Unref();
   }
 }
@@ -1498,36 +1508,39 @@ Status DB::Open(const Options& options, const std::string& dbname,
   *dbptr = NULL;
 
   DBImpl* impl = new DBImpl(options, dbname);
-  impl->mutex_.Lock();
-  VersionEdit edit;
-  // Recover handles create_if_missing, error_if_exists
-  bool save_manifest = false;
-  Status s = impl->Recover(&edit, &save_manifest);
-  if (s.ok() && impl->mem_ == NULL) {
-    // Create new log and a corresponding memtable.
-    uint64_t new_log_number = impl->versions_->NewFileNumber();
-    WritableFile* lfile;
-    s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
-                                     &lfile);
-    if (s.ok()) {
-      edit.SetLogNumber(new_log_number);
-      impl->logfile_ = lfile;
-      impl->logfile_number_ = new_log_number;
-      impl->log_ = new log::Writer(lfile);
-      impl->mem_ = new MemTable(impl->internal_comparator_);
-      impl->mem_->Ref();
+  Status s;
+  __transaction_relaxed {
+    //impl->mutex_.Lock();
+    VersionEdit edit;
+    // Recover handles create_if_missing, error_if_exists
+    bool save_manifest = false;
+    s = impl->Recover(&edit, &save_manifest);
+    if (s.ok() && impl->mem_ == NULL) {
+      // Create new log and a corresponding memtable.
+      uint64_t new_log_number = impl->versions_->NewFileNumber();
+      WritableFile* lfile;
+      s = options.env->NewWritableFile(LogFileName(dbname, new_log_number),
+                                       &lfile);
+      if (s.ok()) {
+        edit.SetLogNumber(new_log_number);
+        impl->logfile_ = lfile;
+        impl->logfile_number_ = new_log_number;
+        impl->log_ = new log::Writer(lfile);
+        impl->mem_ = new MemTable(impl->internal_comparator_);
+        impl->mem_->Ref();
+      }
     }
+    if (s.ok() && save_manifest) {
+      edit.SetPrevLogNumber(0);  // No older logs needed after recovery.
+      edit.SetLogNumber(impl->logfile_number_);
+      s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
+    }
+    if (s.ok()) {
+      impl->DeleteObsoleteFiles();
+      impl->MaybeScheduleCompaction();
+    }
+    //impl->mutex_.Unlock();
   }
-  if (s.ok() && save_manifest) {
-    edit.SetPrevLogNumber(0);  // No older logs needed after recovery.
-    edit.SetLogNumber(impl->logfile_number_);
-    s = impl->versions_->LogAndApply(&edit, &impl->mutex_);
-  }
-  if (s.ok()) {
-    impl->DeleteObsoleteFiles();
-    impl->MaybeScheduleCompaction();
-  }
-  impl->mutex_.Unlock();
   if (s.ok()) {
     assert(impl->mem_ != NULL);
     *dbptr = impl;

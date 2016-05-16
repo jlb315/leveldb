@@ -110,7 +110,7 @@ class DBImpl : public DB {
   void  BackgroundCompaction() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
   void CleanupCompaction(CompactionState* compact)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-  Status DoCompactionWork(CompactionState* compact)
+  Status DoCompactionWork(CompactionState* compact, const uint64_t start_micros, int64_t imm_micros)
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   Status OpenCompactionOutputFile(CompactionState* compact);
