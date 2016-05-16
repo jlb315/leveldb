@@ -7,9 +7,9 @@
 # to switch between compilation modes.
 
 # (A) Production use (optimized mode)
-OPT ?= -O2 -DNDEBUG -fgnu-tm
+# OPT ?= -O2 -DNDEBUG
 # (B) Debug mode, w/ full line-level debugging symbols
-# OPT ?= -g2
+OPT ?= -g2
 # (C) Profiling mode: opt, but w/debugging symbols
 # OPT ?= -O2 -g2 -DNDEBUG
 #-----------------------------------------------
@@ -61,6 +61,7 @@ BENCHMARKS = \
 
 CFLAGS += -I. -I./include $(PLATFORM_CCFLAGS) $(OPT)
 CXXFLAGS += -I. -I./include $(PLATFORM_CXXFLAGS) $(OPT)
+CXX += -fgnu-tm
 
 LDFLAGS += $(PLATFORM_LDFLAGS)
 LIBS += $(PLATFORM_LIBS)
