@@ -148,8 +148,8 @@ class LRUCache {
   void Release(Cache::Handle* handle);
   void Erase(const Slice& key, uint32_t hash);
   void Prune();
-  size_t TotalCharge() const {
-    MutexLock l(&mutex_);
+  size_t TotalCharge() const __transaction_atomic {
+//    MutexLock l(&mutex_);
     return usage_;
   }
 
@@ -211,8 +211,8 @@ void LRUCache::LRU_Append(LRUHandle* e) {
   e->next->prev = e;
 }
 
-Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash) {
-  MutexLock l(&mutex_);
+Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash) __transaction_relaxed {
+  //MutexLock l(&mutex_);
   LRUHandle* e = table_.Lookup(key, hash);
   if (e != NULL) {
     e->refs++;
@@ -222,16 +222,16 @@ Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash) {
   return reinterpret_cast<Cache::Handle*>(e);
 }
 
-void LRUCache::Release(Cache::Handle* handle) {
-  MutexLock l(&mutex_);
+void LRUCache::Release(Cache::Handle* handle) __transaction_relaxed {
+  //MutexLock l(&mutex_);
   Unref(reinterpret_cast<LRUHandle*>(handle));
 }
 
 Cache::Handle* LRUCache::Insert(
     const Slice& key, uint32_t hash, void* value, size_t charge,
     void (*deleter)(const Slice& key, void* value)) {
-  MutexLock l(&mutex_);
-
+  //MutexLock l(&mutex_);
+__transaction_relaxed {
   LRUHandle* e = reinterpret_cast<LRUHandle*>(
       malloc(sizeof(LRUHandle)-1 + key.size()));
   e->value = value;
@@ -259,9 +259,9 @@ Cache::Handle* LRUCache::Insert(
 
   return reinterpret_cast<Cache::Handle*>(e);
 }
-
-void LRUCache::Erase(const Slice& key, uint32_t hash) {
-  MutexLock l(&mutex_);
+}
+void LRUCache::Erase(const Slice& key, uint32_t hash) __transaction_relaxed {
+ // MutexLock l(&mutex_);
   LRUHandle* e = table_.Remove(key, hash);
   if (e != NULL) {
     LRU_Remove(e);
@@ -269,8 +269,8 @@ void LRUCache::Erase(const Slice& key, uint32_t hash) {
   }
 }
 
-void LRUCache::Prune() {
-  MutexLock l(&mutex_);
+void LRUCache::Prune() __transaction_relaxed{
+ // MutexLock l(&mutex_);
   for (LRUHandle* e = lru_.next; e != &lru_; ) {
     LRUHandle* next = e->next;
     if (e->refs == 1) {
@@ -328,8 +328,8 @@ class ShardedLRUCache : public Cache {
   virtual void* Value(Handle* handle) {
     return reinterpret_cast<LRUHandle*>(handle)->value;
   }
-  virtual uint64_t NewId() {
-    MutexLock l(&id_mutex_);
+  virtual uint64_t NewId() __transaction_atomic{
+//    MutexLock l(&id_mutex_);
     return ++(last_id_);
   }
   virtual void Prune() {
