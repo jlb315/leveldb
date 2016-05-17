@@ -346,8 +346,8 @@ Status FaultInjectionTestEnv::DeleteFilesCreatedAfterLastDirSync() {
   return s;
 }
 
-void FaultInjectionTestEnv::WritableFileClosed(const FileState& state) {
-  MutexLock l(&mutex_);
+void FaultInjectionTestEnv::WritableFileClosed(const FileState& state) __transaction_relaxed {
+  //MutexLock l(&mutex_);
   db_file_state_[state.filename_] = state;
 }
 
