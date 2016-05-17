@@ -606,7 +606,22 @@ void DBImpl::TEST_CompactRange(int level, const Slice* begin,const Slice* end) {
     while (!manual.done && !shutting_down_.Acquire_Load() && bg_error_.ok()) {
       if (manual_compaction_ == NULL) {  // Idle
         manual_compaction_ = &manual;
-        MaybeScheduleCompaction();
+        //MaybeScheduleCompaction();
+        if (bg_compaction_scheduled_) {
+          // Already scheduled
+        } else if (shutting_down_.Acquire_Load()) {
+          // DB is being deleted; no more background compactions
+        } else if (!bg_error_.ok()) {
+          // Already got an error; no more changes
+        } else if (imm_ == NULL &&
+                   manual_compaction_ == NULL &&
+                   !versions_->NeedsCompaction()) {
+          // No work to be done
+        } else {
+          bg_compaction_scheduled_ = true;
+          env_->Schedule(&DBImpl::BGWork, this);
+        }
+		
       } else {  // Running either my compaction or another compaction.
         //bg_cv_.Wait();
       }
@@ -644,7 +659,7 @@ void DBImpl::RecordBackgroundError(const Status& s) {
 }
 
 void DBImpl::MaybeScheduleCompaction() {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
   if (bg_compaction_scheduled_) {
     // Already scheduled
   } else if (shutting_down_.Acquire_Load()) {
@@ -680,7 +695,21 @@ void DBImpl::BackgroundCall() {
 
     // Previous compaction may have produced too many files in a level,
     // so reschedule another compaction if needed.
-    MaybeScheduleCompaction();
+  //  MaybeScheduleCompaction();
+  if (bg_compaction_scheduled_) {
+    // Already scheduled
+  } else if (shutting_down_.Acquire_Load()) {
+    // DB is being deleted; no more background compactions
+  } else if (!bg_error_.ok()) {
+    // Already got an error; no more changes
+  } else if (imm_ == NULL &&
+             manual_compaction_ == NULL &&
+             !versions_->NeedsCompaction()) {
+    // No work to be done
+  } else {
+    bg_compaction_scheduled_ = true;
+    env_->Schedule(&DBImpl::BGWork, this);
+  }
     //bg_cv_.SignalAll();
   }
 }
@@ -1154,7 +1183,22 @@ Status DBImpl::Get(const ReadOptions& options,
     //would lock here with mutexes
 
     if (have_stat_update && current->UpdateStats(stats)) {
-      MaybeScheduleCompaction();
+      //MaybeScheduleCompaction();
+      if (bg_compaction_scheduled_) {
+        // Already scheduled
+      } else if (shutting_down_.Acquire_Load()) {
+        // DB is being deleted; no more background compactions
+      } else if (!bg_error_.ok()) {
+        // Already got an error; no more changes
+      } else if (imm_ == NULL &&
+                 manual_compaction_ == NULL &&
+                 !versions_->NeedsCompaction()) {
+        // No work to be done
+      } else {
+        bg_compaction_scheduled_ = true;
+        env_->Schedule(&DBImpl::BGWork, this);
+      }
+
     }
     mem->Unref();
     if (imm != NULL) imm->Unref();
@@ -1178,7 +1222,22 @@ Iterator* DBImpl::NewIterator(const ReadOptions& options) {
 void DBImpl::RecordReadSample(Slice key) {
   __transaction_relaxed {
     if (versions_->current()->RecordReadSample(key)) {
-      MaybeScheduleCompaction();
+      //MaybeScheduleCompaction();
+  	  if (bg_compaction_scheduled_) {
+    	  // Already scheduled
+    	} else if (shutting_down_.Acquire_Load()) {
+    	  // DB is being deleted; no more background compactions
+    	} else if (!bg_error_.ok()) {
+    	  // Already got an error; no more changes
+    	} else if (imm_ == NULL &&
+    	           manual_compaction_ == NULL &&
+    	           !versions_->NeedsCompaction()) {
+    	  // No work to be done
+    	} else {
+    	  bg_compaction_scheduled_ = true;
+    	  env_->Schedule(&DBImpl::BGWork, this);
+    	}
+
     }
   }
 }
@@ -1331,9 +1390,11 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
 // REQUIRES: mutex_ is held
 // REQUIRES: this thread is currently at the front of the writer queue
 Status DBImpl::MakeRoomForWrite(bool force) {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
   assert(!writers_.empty());
   bool allow_delay = !force;
+  // add write_log flag so that repeats to log don't occur
+  bool write_log = true;
   Status s;
   while (true) {
     if (!bg_error_.ok()) {
@@ -1349,23 +1410,25 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       // individual write by 1ms to reduce latency variance.  Also,
       // this delay hands over some CPU to the compaction thread in
       // case it is sharing the same core as the writer.
-      mutex_.Unlock();
-      env_->SleepForMicroseconds(1000);
+      //mutex_.Unlock();
+      //env_->SleepForMicroseconds(1000);
       allow_delay = false;  // Do not delay a single write more than once
-      mutex_.Lock();
+      //mutex_.Lock();
     } else if (!force &&
                (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
       // There is room in current memtable
       break;
-    } else if (imm_ != NULL) {
+    } else if (write_log && imm_ != NULL) {
       // We have filled up the current memtable, but the previous
       // one is still being compacted, so we wait.
       Log(options_.info_log, "Current memtable full; waiting...\n");
-      bg_cv_.Wait();
-    } else if (versions_->NumLevelFiles(0) >= config::kL0_StopWritesTrigger) {
+	  write_log = false;
+      //bg_cv_.Wait();
+    } else if (write_log && versions_->NumLevelFiles(0) >= config::kL0_StopWritesTrigger) {
       // There are too many level-0 files.
       Log(options_.info_log, "Too many L0 files; waiting...\n");
-      bg_cv_.Wait();
+	  write_log = false;
+      //bg_cv_.Wait();
     } else {
       // Attempt to switch to a new memtable and trigger compaction of old
       assert(versions_->PrevLogNumber() == 0);
@@ -1387,7 +1450,22 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       mem_ = new MemTable(internal_comparator_);
       mem_->Ref();
       force = false;   // Do not force another compaction if have room
-      MaybeScheduleCompaction();
+      //MaybeScheduleCompaction();
+      if (bg_compaction_scheduled_) {
+        // Already scheduled
+      } else if (shutting_down_.Acquire_Load()) {
+        // DB is being deleted; no more background compactions
+      } else if (!bg_error_.ok()) {
+        // Already got an error; no more changes
+      } else if (imm_ == NULL &&
+                 manual_compaction_ == NULL &&
+                 !versions_->NeedsCompaction()) {
+        // No work to be done
+      } else {
+        bg_compaction_scheduled_ = true;
+        env_->Schedule(&DBImpl::BGWork, this);
+      }
+
     }
   }
   return s;
@@ -1538,6 +1616,7 @@ Status DB::Open(const Options& options, const std::string& dbname,
     if (s.ok()) {
       impl->DeleteObsoleteFiles();
       impl->MaybeScheduleCompaction();
+
     }
     //impl->mutex_.Unlock();
   }
