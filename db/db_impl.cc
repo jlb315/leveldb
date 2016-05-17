@@ -651,7 +651,7 @@ Status DBImpl::TEST_CompactMemTable() {
 }
 
 void DBImpl::RecordBackgroundError(const Status& s) {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
   if (bg_error_.ok()) {
     bg_error_ = s;
     bg_cv_.SignalAll();
@@ -832,7 +832,7 @@ void DBImpl::BackgroundCompaction() {
 }
 
 void DBImpl::CleanupCompaction(CompactionState* compact) {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
   if (compact->builder != NULL) {
     // May happen if we get a shutdown call in the middle of compaction
     compact->builder->Abandon();
@@ -925,7 +925,7 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
 
 
 Status DBImpl::InstallCompactionResults(CompactionState* compact) {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
   Log(options_.info_log,  "Compacted %d@%d + %d@%d files => %lld bytes",
       compact->compaction->num_input_files(0),
       compact->compaction->level(),
