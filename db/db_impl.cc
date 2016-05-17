@@ -483,7 +483,7 @@ Status DBImpl::RecoverLogFile(uint64_t log_number, bool last_log,
 }
 
 Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
-                                Version* base) {
+                                Version* base) __transaction_relaxed {
   // Try keeping BuildTable within transaction. If performance is affected
   // try inlining WriteLevel0Table
   
@@ -531,7 +531,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   return s;
 }
 
-void DBImpl::CompactMemTable() {
+void DBImpl::CompactMemTable() __transaction_relaxed {
   //mutex_.AssertHeld();
   assert(imm_ != NULL);
 
@@ -564,20 +564,20 @@ void DBImpl::CompactMemTable() {
   }
 }
 
-void DBImpl::CompactRange(const Slice* begin, const Slice* end) {
+void DBImpl::CompactRange(const Slice* begin, const Slice* end) __transaction_relaxed {
   int max_level_with_files = 1;
-  __transaction_relaxed {
     Version* base = versions_->current();
     for (int level = 1; level < config::kNumLevels; level++) {
       if (base->OverlapInLevel(level, begin, end)) {
         max_level_with_files = level;
       }
-    }
   }
+  /*
   TEST_CompactMemTable(); // TODO(sanjay): Skip if memtable does not overlap
   for (int level = 0; level < max_level_with_files; level++) {
     TEST_CompactRange(level, begin, end);
   }
+  */
 }
 
 void DBImpl::TEST_CompactRange(int level, const Slice* begin,const Slice* end) {
@@ -681,7 +681,7 @@ void DBImpl::BGWork(void* db) {
 }
 
 void DBImpl::BackgroundCall() {
-  __transaction_relaxed {
+  //__transaction_relaxed {
     assert(bg_compaction_scheduled_);
     if (shutting_down_.Acquire_Load()) {
       // No more background work when shutting down.
@@ -711,7 +711,7 @@ void DBImpl::BackgroundCall() {
     env_->Schedule(&DBImpl::BGWork, this);
   }
     //bg_cv_.SignalAll();
-  }
+  //}
 }
 
 void DBImpl::BackgroundCompaction() {
@@ -946,7 +946,6 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
 }
 /* no locking during actual compaction work*/
 Status DBImpl::DoCompactionWork(CompactionState* compact, const uint64_t start_micros, int64_t imm_micros) {
-
   Iterator* input = versions_->MakeInputIterator(compact->compaction);
   input->SeekToFirst();
   Status status;
@@ -1124,8 +1123,8 @@ Iterator* DBImpl::NewInternalIterator(const ReadOptions& options,
     internal_iter->RegisterCleanup(CleanupIteratorState, cleanup, NULL);
 
     *seed = ++seed_;
-  }
   return internal_iter;
+  }
 }
 
 Iterator* DBImpl::TEST_NewInternalIterator() {
@@ -1169,7 +1168,7 @@ Status DBImpl::Get(const ReadOptions& options,
     Version::GetStats stats;
 
     // Unlock while reading from files and memtables
-  
+    }
     // First look in the memtable, then in the immutable memtable (if any).
     LookupKey lkey(key, snapshot);
     if (mem->Get(lkey, value, &s)) {
@@ -1181,7 +1180,7 @@ Status DBImpl::Get(const ReadOptions& options,
       have_stat_update = true;
     }
     //would lock here with mutexes
-
+__transaction_relaxed{
     if (have_stat_update && current->UpdateStats(stats)) {
       //MaybeScheduleCompaction();
       if (bg_compaction_scheduled_) {
@@ -1397,6 +1396,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
   bool write_log = true;
   Status s;
   while (true) {
+  start: 
     if (!bg_error_.ok()) {
       // Yield previous error
       s = bg_error_;
@@ -1411,8 +1411,8 @@ Status DBImpl::MakeRoomForWrite(bool force) {
       // this delay hands over some CPU to the compaction thread in
       // case it is sharing the same core as the writer.
       //mutex_.Unlock();
-      //env_->SleepForMicroseconds(1000);
       allow_delay = false;  // Do not delay a single write more than once
+      goto start;
       //mutex_.Lock();
     } else if (!force &&
                (mem_->ApproximateMemoryUsage() <= options_.write_buffer_size)) {
