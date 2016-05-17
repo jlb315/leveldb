@@ -263,9 +263,9 @@ class InMemoryEnv : public EnvWrapper {
   }
 
   virtual Status NewWritableFile(const std::string& fname,
-                                 WritableFile** result) /*__transaction_relaxed*/{
+                                 WritableFile** result) __transaction_relaxed{
 //__transaction_relaxed{
-    MutexLock lock(&mutex_);
+    //MutexLock lock(&mutex_);
     if (file_map_.find(fname) != file_map_.end()) {
       DeleteFileInternal(fname);
     }
@@ -280,8 +280,8 @@ class InMemoryEnv : public EnvWrapper {
   }
 
   virtual Status NewAppendableFile(const std::string& fname,
-                                   WritableFile** result) {
-    MutexLock lock(&mutex_);
+                                   WritableFile** result) __transaction_relaxed {
+    //MutexLock lock(&mutex_);
     FileState** sptr = &file_map_[fname];
     FileState* file = *sptr;
     if (file == NULL) {
@@ -292,8 +292,8 @@ class InMemoryEnv : public EnvWrapper {
     return Status::OK();
   }
 
-  virtual bool FileExists(const std::string& fname) {
-    MutexLock lock(&mutex_);
+  virtual bool FileExists(const std::string& fname) __transaction_relaxed {
+    //MutexLock lock(&mutex_);
     return file_map_.find(fname) != file_map_.end();
   }
 
