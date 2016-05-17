@@ -1168,7 +1168,7 @@ Status DBImpl::Get(const ReadOptions& options,
     Version::GetStats stats;
 
     // Unlock while reading from files and memtables
-    }
+//    }
     // First look in the memtable, then in the immutable memtable (if any).
     LookupKey lkey(key, snapshot);
     if (mem->Get(lkey, value, &s)) {
@@ -1180,7 +1180,7 @@ Status DBImpl::Get(const ReadOptions& options,
       have_stat_update = true;
     }
     //would lock here with mutexes
-__transaction_relaxed{
+//__transaction_relaxed{
     if (have_stat_update && current->UpdateStats(stats)) {
       //MaybeScheduleCompaction();
       if (bg_compaction_scheduled_) {
@@ -1218,8 +1218,7 @@ Iterator* DBImpl::NewIterator(const ReadOptions& options) {
       seed);
 }
 
-void DBImpl::RecordReadSample(Slice key) {
-  __transaction_relaxed {
+void DBImpl::RecordReadSample(Slice key) __transaction_relaxed {
     if (versions_->current()->RecordReadSample(key)) {
       //MaybeScheduleCompaction();
   	  if (bg_compaction_scheduled_) {
@@ -1238,20 +1237,15 @@ void DBImpl::RecordReadSample(Slice key) {
     	}
 
     }
-  }
 }
 
-const Snapshot* DBImpl::GetSnapshot() {
-  __transaction_relaxed {
+const Snapshot* DBImpl::GetSnapshot() __transaction_relaxed {
     //MutexLock l(&mutex_);
     return snapshots_.New(versions_->LastSequence());
-  }
 }
 
-void DBImpl::ReleaseSnapshot(const Snapshot* s) {
-  __transaction_relaxed {
+void DBImpl::ReleaseSnapshot(const Snapshot* s) __transaction_relaxed {
     snapshots_.Delete(reinterpret_cast<const SnapshotImpl*>(s));
-  }
 }
 
 // Convenience methods
