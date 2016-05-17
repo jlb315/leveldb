@@ -269,7 +269,7 @@ void DBImpl::DeleteObsoleteFiles() {
 }
 
 Status DBImpl::Recover(VersionEdit* edit, bool *save_manifest) {
-  mutex_.AssertHeld();
+  //mutex_.AssertHeld();
 
   // Ignore error from CreateDir since the creation of the DB is
   // committed only when the descriptor is created, and this directory
